@@ -75,7 +75,3 @@ python -m unittest discover -s tests -v
 ```
 
 For Atlas, set `HRONE_TEST_MONGO_URI` to the same Atlas URI only if the cluster/user is disposable and permits dropping databases; otherwise leave the integration tests disabled and use a separate test cluster. Never commit the URI.
-
-## Submission notes
-
-The repository includes `app/main.py`, `requirements.txt`, `README.md`, `REVIEW.md`, `DECISIONS.md`, and tests. Do not commit `.env` files, secrets, a Dockerfile, virtual environments, or data dumps. Review `DECISIONS.md` and be ready to explain and modify the implementation during the live discussion.
