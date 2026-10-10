@@ -1,7 +1,5 @@
 # Employee Attendance & Analytics API
 
-FastAPI + MongoDB backend for the HROne Software Engineer Trainee assignment. All application code is in `app/main.py`.
-
 ## Requirements and configuration
 
 - Python 3.11+, Git, and MongoDB 6.0 or newer.
