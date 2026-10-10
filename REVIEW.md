@@ -1,0 +1,38 @@
+# REVIEW.md — starter-code review
+
+| # | Where (starter function / section) | What is wrong | How to notice it | How it is fixed in the submission |
+|---:|---|---|---|---|
+| 1 | `compute_late_minutes` | Uses the punch-in's local calendar date instead of the record's IST attendance day; it cannot correctly model an overnight shift's start. | Test a 22:00–06:00 shift and a 05:30 IST punch-in assigned to the previous shift day. | Compute the shift-start instant from the record's attendance date in IST. |
+| 2 | `compute_late_minutes` | The helper accepts no employee/attendance-date context and has no explicit whole-second normalization. | Use a timestamp with milliseconds or an overnight shift. | Normalize every instant to whole UTC seconds and pass the attendance date to the helper. |
+| 3 | `compute_late_minutes` | It first truncates elapsed time to whole minutes, so 10 minutes and 1 second is treated as 10 minutes and incorrectly receives no lateness. | Punch in at 09:40:01 for a 09:30 shift. | Compare elapsed seconds to 600 first, then floor elapsed seconds to whole minutes. |
+| 4 | `compute_work_hours` | Python's built-in `round` uses ties-to-even rather than the required half-up rule. | Test durations at a half-cent boundary. | Use `Decimal` and `ROUND_HALF_UP` after computing whole elapsed seconds. |
+| 5 | `compute_overtime` | Always places the shift end on the attendance date, so an overnight shift ends on the wrong day. | Test a 22:00–06:00 shift punched out at 06:40 the next day. | Move the end instant to the following day when `shift_end <= shift_start`. |
+| 6 | `compute_overtime` | Counts any positive overtime, even though the rule requires at least 30 minutes before overtime is counted. | Punch out 18:35 for an 18:30 shift; it should produce zero overtime. | Apply the 30-minute threshold before flooring elapsed overtime minutes. |
+| 7 | `health` | Always returns `ok` even if MongoDB is unavailable. | Stop MongoDB and request `/health`. | Ping MongoDB and return HTTP 503 when it cannot answer. |
+| 8 | `create_employee` | Check-then-insert is race-prone and has no duplicate-key handling. | Send simultaneous creates with the same `emp_code`. | Enforce a unique index and map duplicate-key errors to HTTP 409. |
+| 9 | `create_employee` / `list_employees` | `created_at` is created as a naive local datetime, and both create/list responses expose Python datetimes as ISO strings instead of the required epoch milliseconds. | Run under a non-UTC timezone and compare `POST` and `GET /employees` results with the `Employee` schema. | Store an aware UTC datetime and serialize `created_at` as epoch milliseconds in both responses. |
+| 10 | `EmployeeIn` | Does not enforce the contract's patterns, lengths, valid calendar date, or different shift start/end values. | Try malformed employee codes, invalid dates, or identical shift times. | Add strict Pydantic validation for all contract constraints. |
+| 11 | `list_employees` | `skip = page * page_size` skips the first page when `page=1`. | Request page 1 with at least 20 employees. | Use `(page - 1) * page_size`. |
+| 12 | `list_employees` | `total` counts the entire collection, even when a department filter is supplied. | Filter by a department that has fewer employees than the full collection. | Count the filtered query. |
+| 13 | `list_employees` | No explicit sort or input bounds; results can move between pages and large page sizes are allowed. | Repeat page requests or try page size 1,000. | Sort by `emp_code`, validate page/page size, and cap page size at 100. |
+| 14 | `punch_in` | Does not return 404 for an unknown employee before dereferencing the employee document. | Punch in using a nonexistent employee code. | Check employee existence and return 404. |
+| 15 | `punch_in` | Converts timestamps through the host's local timezone and does not enforce epoch-millisecond bounds or whole-second storage. | Send a seconds-looking timestamp or run on a machine configured outside UTC. | Validate epoch milliseconds, truncate before calculation, and convert explicitly through UTC/IST. |
+| 16 | `punch_in` | Does not implement the overnight attendance-date rule. | Punch in at 05:30 IST for a 22:00–06:00 shift. | Compute the attendance date from the employee's shift and the R1 exception. |
+| 17 | `punch_in` | Check-then-insert permits duplicate attendance records under concurrency. | Send parallel punch-ins for one employee on one attendance date. | Use a unique `(emp_code, date)` index and handle duplicate-key errors as 409. |
+| 18 | `punch_in` | Does not validate presence statuses and relies on helpers with incorrect rounding/overtime behavior. | Submit an invalid status or test grace-period and overnight edge cases. | Validate `PRESENT`, `WFH`, or `ON_DUTY` and use corrected derived-field helpers. |
+| 19 | `list_attendance` | Fetches the full attendance collection into application memory and sorts in Python. | Load around 100,000 records and request one page. | Apply filters, sort, skip and limit inside MongoDB with supporting indexes. |
+| 20 | `list_attendance` | Sorting omits the required `emp_code` ascending tie-breaker. | Query multiple employees with the same attendance date. | Sort by `date` descending and then `emp_code` ascending. |
+| 21 | `punch_in` / `list_attendance` | Both expose a made-up `id` derived from MongoDB `_id`; `list_attendance` also returns BSON datetimes in MongoDB's default API-incorrect representation. | Compare both responses with `AttendanceRecord` and check that `_id` never leaves the database. | Do not return `id` or `_id`; serialize instants (including nested history values) as epoch milliseconds and supply legacy defaults. |
+| 22 | `list_attendance` | Does not reject `date_from > date_to` or constrain pagination. | Send an inverted date range or invalid page size. | Validate date range and enforce the page/page-size contract. |
+| 23 | Missing endpoints | Punch-out, regularization, all four analytics routes, and the explain route are absent. | Request any endpoint marked “You” in the contract. | Implement every endpoint and keep analytics work in aggregation pipelines. |
+| 24 | Module/startup | No application-created indexes exist. | Inspect indexes on a fresh evaluator database. | Create unique and query-supporting indexes idempotently at startup. |
+| 25 | Concurrency / persistence | No atomic compare-and-set behavior protects punch-out or concurrent regularization; manual correction history is not implemented. | Issue parallel punch-outs or corrections and inspect stored history. | Use atomic updates, optimistic snapshot checks, and `$push` to append one history entry per successful correction. |
+| 26 | `list_attendance` filters | Optional filters use truthiness (`if emp_code`, etc.), so an explicitly supplied empty string is silently ignored; date strings and status values are not validated against the contract. | Request `?emp_code=` and malformed `date_from` / invalid `status` values. | Distinguish omitted parameters from supplied values, parse calendar dates, validate the status enum, and ensure malformed dates or unsupported statuses return 422. |
+
+## Items reviewed and not treated as defects
+
+- A single long-lived `MongoClient` is appropriate because it manages a connection pool; creating a new client per request would be worse.
+- Using `emp_code` rather than MongoDB `_id` as the business identifier is correct and matches the contract.
+- Storing `date` and `joined_on` as `YYYY-MM-DD` strings is intentional: they are calendar dates, not instants.
+- The default shift times of `09:30` and `18:30` match the supplied contract and are retained.
+
